@@ -1,0 +1,16 @@
+{
+  "id": "com.company.masterdataloader",
+  "name": "Master Data Loader",
+  "description": "Custom widget for SAC Planning master data upload",
+  "vendor": "Copilot",
+  "version": "1.0.0",
+  "newInstancePrefix": "MDL",
+  "webcomponents": [
+    {
+      "kind": "main",
+      "tag": "com-company-masterdataloader",
+      "url": "masterdataloader.js"
+    }
+  ],
+  "properties": {}
+}
