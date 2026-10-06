@@ -2,7 +2,7 @@
   "id": "com.sac.masterdatauploader",
   "version": "1.0.0",
   "name": "Master Data Uploader",
-  "description": "Upload CSV master data and save members to an SAC planning model through Analytic Application scripting.",
+  "description": "CSV master-data upload widget for SAC Planning models.",
   "newInstancePrefix": "MasterDataUploader",
   "vendor": "Custom",
   "icon": "",
@@ -139,55 +139,55 @@
       "description": "Starts the import process and fires onStart."
     },
     "getSelectedDimension": {
-      "description": "Returns the selected dimension ID.",
+      "description": "Returns selected dimension ID.",
       "returnType": "string"
     },
     "getRowCount": {
-      "description": "Returns the imported CSV row count.",
+      "description": "Returns uploaded row count.",
       "returnType": "integer"
     },
     "getRowFieldValue": {
-      "description": "Returns a field value from an imported row.",
+      "description": "Returns a CSV value from a selected row.",
       "returnType": "string",
       "parameters": [
         {
           "name": "index",
           "type": "integer",
-          "description": "Zero-based row index"
+          "description": "Row index"
         },
         {
           "name": "fieldKey",
           "type": "string",
-          "description": "CSV column or dimension property key"
+          "description": "CSV header name"
         }
       ]
     },
     "getImportPayload": {
-      "description": "Returns the complete import payload as JSON.",
+      "description": "Returns import data as JSON.",
       "returnType": "string"
     },
     "setRowStatus": {
-      "description": "Sets the processing result for a row.",
+      "description": "Sets individual row processing status.",
       "parameters": [
         {
           "name": "index",
           "type": "integer",
-          "description": "Zero-based row index"
+          "description": "Row index"
         },
         {
           "name": "status",
           "type": "string",
-          "description": "success, error, pending"
+          "description": "pending, success, or error"
         },
         {
           "name": "message",
           "type": "string",
-          "description": "Optional result message"
+          "description": "Result message"
         }
       ]
     },
     "setSaveResult": {
-      "description": "Sets the overall save result.",
+      "description": "Sets overall save result.",
       "parameters": [
         {
           "name": "status",
@@ -202,21 +202,21 @@
       ]
     },
     "resetWidget": {
-      "description": "Clears uploaded data and resets the widget."
+      "description": "Clears all uploaded data."
     }
   },
   "events": {
     "onStart": {
-      "description": "Fired when import is started."
+      "description": "Fired when Start Import is selected."
     },
     "onSubmit": {
-      "description": "Fired when the user confirms Save to Model. Use getter methods to read the data."
+      "description": "Fired when Save to Model is selected."
     },
     "onSave": {
-      "description": "Fired after setSaveResult is called with success."
+      "description": "Fired after a successful save result."
     },
     "onError": {
-      "description": "Fired when validation or saving fails."
+      "description": "Fired after validation or save errors."
     }
   },
   "dataBindings": {}
