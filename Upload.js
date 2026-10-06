@@ -9,7 +9,7 @@
   }
 
   function escapeHtml(value) {
-    return String(value === null || value === undefined ? "" : value)
+    return String(value === undefined || value === null ? "" : value)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
@@ -17,62 +17,11 @@
       .replace(/'/g, "&#039;");
   }
 
-  function parseCSV(text) {
-    var rows = [];
-    var row = [];
-    var value = "";
-    var quoted = false;
-    var index;
-    var character;
-
-    for (index = 0; index < text.length; index++) {
-      character = text[index];
-
-      if (character === '"') {
-        if (quoted && text[index + 1] === '"') {
-          value += '"';
-          index++;
-        } else {
-          quoted = !quoted;
-        }
-      } else if (character === "," && !quoted) {
-        row.push(value.trim());
-        value = "";
-      } else if ((character === "\n" || character === "\r") && !quoted) {
-        if (character === "\r" && text[index + 1] === "\n") {
-          index++;
-        }
-
-        row.push(value.trim());
-
-        if (row.some(function (cell) { return cell !== ""; })) {
-          rows.push(row);
-        }
-
-        row = [];
-        value = "";
-      } else {
-        value += character;
-      }
-    }
-
-    if (value !== "" || row.length > 0) {
-      row.push(value.trim());
-      rows.push(row);
-    }
-
-    return rows;
-  }
-
   function parseDimensionConfig(value) {
     var config;
 
-    if (!value || !String(value).trim()) {
-      return null;
-    }
-
     try {
-      config = JSON.parse(value);
+      config = JSON.parse(value || "");
     } catch (error) {
       return null;
     }
@@ -81,9 +30,7 @@
       return null;
     }
 
-    if (!Array.isArray(config.fields)) {
-      config.fields = [];
-    }
+    config.fields = Array.isArray(config.fields) ? config.fields : [];
 
     config.fields = config.fields.map(function (field) {
       if (typeof field === "string") {
@@ -106,6 +53,55 @@
     return config;
   }
 
+  function parseCSV(text) {
+    var rows = [];
+    var row = [];
+    var value = "";
+    var quoted = false;
+    var character;
+    var index;
+
+    for (index = 0; index < text.length; index++) {
+      character = text[index];
+
+      if (character === '"') {
+        if (quoted && text[index + 1] === '"') {
+          value += '"';
+          index++;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (character === "," && !quoted) {
+        row.push(value.trim());
+        value = "";
+      } else if ((character === "\n" || character === "\r") && !quoted) {
+        if (character === "\r" && text[index + 1] === "\n") {
+          index++;
+        }
+
+        row.push(value.trim());
+
+        if (row.some(function (cell) {
+          return cell !== "";
+        })) {
+          rows.push(row);
+        }
+
+        row = [];
+        value = "";
+      } else {
+        value += character;
+      }
+    }
+
+    if (value !== "" || row.length > 0) {
+      row.push(value.trim());
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
   class MasterDataUploader extends HTMLElement {
     constructor() {
       super();
@@ -114,11 +110,11 @@
       this._rows = [];
       this._headers = [];
       this._selectedDimension = "";
-      this._started = false;
       this._message = "";
-      this._messageType = "";
+      this._messageType = "info";
+      this._started = false;
 
-      this._shadowRoot = this.attachShadow({ mode: "open" });
+      this._root = this.attachShadow({ mode: "open" });
       this._render();
     }
 
@@ -134,13 +130,16 @@
 
     startImport() {
       this._started = true;
-      this._setMessage("Import started. Select a dimension and upload a CSV file.", "info");
+      this._message = "Import started. Select a dimension and upload a CSV file.";
+      this._messageType = "info";
 
       this.dispatchEvent(new CustomEvent("onStart", {
         detail: {
           modelId: this._props.modelId || ""
         }
       }));
+
+      this._render();
     }
 
     getSelectedDimension() {
@@ -158,9 +157,7 @@
         return "";
       }
 
-      return row.values[fieldKey] === undefined || row.values[fieldKey] === null
-        ? ""
-        : String(row.values[fieldKey]);
+      return String(row.values[fieldKey] || "");
     }
 
     getImportPayload() {
@@ -169,13 +166,7 @@
         modelId: this._props.modelId || "",
         dimensionId: this._selectedDimension || "",
         headers: this._headers,
-        rows: this._rows.map(function (row) {
-          return {
-            values: row.values,
-            status: row.status,
-            message: row.message
-          };
-        })
+        rows: this._rows
       });
     }
 
@@ -192,45 +183,36 @@
     }
 
     setSaveResult(status, message) {
-      var normalizedStatus = String(status || "").toLowerCase();
+      var result = String(status || "error").toLowerCase();
 
-      this._setMessage(
-        message || (normalizedStatus === "success"
+      this._message = message || (
+        result === "success"
           ? "Master data saved successfully."
-          : "Master data save failed."),
-        normalizedStatus
+          : "Master data save failed."
       );
 
-      if (normalizedStatus === "success") {
-        this.dispatchEvent(new CustomEvent("onSave", {
+      this._messageType = result;
+      this._render();
+
+      this.dispatchEvent(new CustomEvent(
+        result === "success" ? "onSave" : "onError",
+        {
           detail: {
             modelId: this._props.modelId || "",
             dimensionId: this._selectedDimension || "",
-            rowCount: this._rows.length
+            message: this._message
           }
-        }));
-      } else {
-        this.dispatchEvent(new CustomEvent("onError", {
-          detail: {
-            message: message || "Save failed."
-          }
-        }));
-      }
+        }
+      ));
     }
 
     resetWidget() {
       this._rows = [];
       this._headers = [];
       this._selectedDimension = "";
-      this._started = false;
       this._message = "";
-      this._messageType = "";
-      this._render();
-    }
-
-    _setMessage(message, type) {
-      this._message = message || "";
-      this._messageType = type || "info";
+      this._messageType = "info";
+      this._started = false;
       this._render();
     }
 
@@ -249,7 +231,7 @@
       return dimensions;
     }
 
-    _getCurrentDimension() {
+    _getSelectedDimensionConfig() {
       var dimensions = this._getDimensions();
       var index;
 
@@ -262,6 +244,12 @@
       return null;
     }
 
+    _setMessage(message, type) {
+      this._message = message;
+      this._messageType = type || "info";
+      this._render();
+    }
+
     _readFile(file) {
       var self = this;
       var reader = new FileReader();
@@ -270,11 +258,8 @@
         return;
       }
 
-      if (!file.name.toLowerCase().match(/\.csv$/)) {
+      if (!/\.csv$/i.test(file.name)) {
         this._setMessage("Only CSV files are supported.", "error");
-        this.dispatchEvent(new CustomEvent("onError", {
-          detail: { message: "Only CSV files are supported." }
-        }));
         return;
       }
 
@@ -283,20 +268,22 @@
       };
 
       reader.onerror = function () {
-        self._setMessage("Unable to read the selected file.", "error");
+        self._setMessage("Unable to read the CSV file.", "error");
       };
 
       reader.readAsText(file);
     }
 
-    _loadCSV(csvText) {
-      var csvRows = parseCSV(csvText);
+    _loadCSV(text) {
+      var csvRows = parseCSV(text);
       var headers;
-      var dataRows;
-      var self = this;
+      var rows;
 
       if (csvRows.length < 2) {
-        this._setMessage("The CSV must contain a header row and at least one data row.", "error");
+        this._setMessage(
+          "CSV must contain headers and at least one data row.",
+          "error"
+        );
         return;
       }
 
@@ -304,15 +291,17 @@
         return String(header || "").trim();
       });
 
-      if (headers.some(function (header) { return header === ""; })) {
-        this._setMessage("CSV column headers cannot be empty.", "error");
+      if (headers.some(function (header) {
+        return header === "";
+      })) {
+        this._setMessage("CSV headers cannot be empty.", "error");
         return;
       }
 
-      dataRows = csvRows.slice(1);
-
+      rows = csvRows.slice(1);
       this._headers = headers;
-      this._rows = dataRows.map(function (cells) {
+
+      this._rows = rows.map(function (cells) {
         var values = {};
 
         headers.forEach(function (header, index) {
@@ -329,9 +318,9 @@
       this._setMessage(this._rows.length + " row(s) loaded successfully.", "success");
     }
 
-    _validateAndSubmit() {
-      var dimension = this._getCurrentDimension();
-      var missingFields = [];
+    _submit() {
+      var dimension = this._getSelectedDimensionConfig();
+      var missingColumns = [];
       var invalidRows = [];
       var self = this;
 
@@ -340,7 +329,7 @@
       }
 
       if (!this._props.modelId) {
-        this._setMessage("Configure the Planning Model ID in the Styling panel.", "error");
+        this._setMessage("Planning Model ID is required.", "error");
         return;
       }
 
@@ -356,13 +345,13 @@
 
       dimension.fields.forEach(function (field) {
         if (field.required && self._headers.indexOf(field.key) === -1) {
-          missingFields.push(field.key);
+          missingColumns.push(field.key);
         }
       });
 
-      if (missingFields.length > 0) {
+      if (missingColumns.length > 0) {
         this._setMessage(
-          "Missing required CSV column(s): " + missingFields.join(", "),
+          "Missing required CSV columns: " + missingColumns.join(", "),
           "error"
         );
         return;
@@ -371,24 +360,23 @@
       this._rows.forEach(function (row, rowIndex) {
         dimension.fields.forEach(function (field) {
           if (field.required && !String(row.values[field.key] || "").trim()) {
-            invalidRows.push(rowIndex + 1);
             row.status = "error";
-            row.message = "Required field missing: " + field.key;
+            row.message = "Missing required value: " + field.key;
+            invalidRows.push(rowIndex + 1);
           }
         });
       });
 
       if (invalidRows.length > 0) {
         this._setMessage(
-          "Required values are missing in row(s): " + invalidRows.join(", "),
+          "Required values missing in row(s): " + invalidRows.join(", "),
           "error"
         );
         return;
       }
 
       this._setMessage(
-        "Data is ready. SAC application logic is now saving " +
-        this._rows.length + " member(s).",
+        "Saving " + this._rows.length + " member(s) to the SAC model.",
         "info"
       );
 
@@ -404,18 +392,18 @@
     _render() {
       var self = this;
       var dimensions = this._getDimensions();
-      var currentDimension = this._getCurrentDimension();
-      var optionHtml = '<option value="">Select dimension</option>';
+      var selectedDimension = this._getSelectedDimensionConfig();
+      var options = '<option value="">Select dimension</option>';
       var headerHtml = "";
-      var bodyHtml = "";
+      var rowsHtml = "";
 
       if (!this._selectedDimension && dimensions.length > 0) {
         this._selectedDimension = dimensions[0].id;
-        currentDimension = dimensions[0];
+        selectedDimension = dimensions[0];
       }
 
       dimensions.forEach(function (dimension) {
-        optionHtml +=
+        options +=
           '<option value="' + escapeHtml(dimension.id) + '"' +
           (dimension.id === self._selectedDimension ? " selected" : "") +
           ">" + escapeHtml(dimension.label || dimension.id) + "</option>";
@@ -431,91 +419,90 @@
             return "<td>" + escapeHtml(row.values[header]) + "</td>";
           }).join("");
 
-          bodyHtml +=
+          rowsHtml +=
             "<tr>" +
             "<td>" + (rowIndex + 1) + "</td>" +
             cells +
-            '<td><span class="status ' + escapeHtml(row.status) + '">' +
+            '<td class="status ' + escapeHtml(row.status) + '">' +
             escapeHtml(row.status) +
-            "</span></td>" +
-            "<td>" + escapeHtml(row.message || "") + "</td>" +
+            "</td>" +
+            "<td>" + escapeHtml(row.message) + "</td>" +
             "</tr>";
         });
       }
 
-      this._shadowRoot.innerHTML =
+      this._root.innerHTML =
         "<style>" +
         ":host{display:block;font-family:Arial,sans-serif;color:#1f2937}" +
-        ".container{height:100%;box-sizing:border-box;padding:16px;background:#ffffff;border:1px solid #d1d5db;border-radius:8px}" +
-        ".title{margin:0 0 16px;font-size:18px;font-weight:700;color:#0f172a}" +
-        ".toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}" +
-        ".field{display:flex;flex-direction:column;gap:5px;min-width:250px}" +
-        "label{font-size:12px;font-weight:700;color:#475569}" +
-        "select,input[type=file]{box-sizing:border-box;width:100%;height:34px;padding:6px;border:1px solid #cbd5e1;border-radius:4px;background:#fff}" +
-        "button{height:34px;padding:0 14px;border:0;border-radius:4px;background:#0a6ed1;color:#fff;font-size:13px;font-weight:600;cursor:pointer}" +
-        "button:hover{background:#085caf}" +
-        "button.secondary{background:#64748b}" +
-        "button.secondary:hover{background:#475569}" +
-        ".info{display:flex;gap:18px;margin:4px 0 14px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;font-size:12px;color:#475569}" +
-        ".message{min-height:20px;margin-bottom:12px;font-size:13px;font-weight:600}" +
+        ".box{padding:16px;border:1px solid #d1d5db;border-radius:8px;background:#fff;box-sizing:border-box}" +
+        "h3{margin:0 0 16px;font-size:18px}" +
+        ".tools{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}" +
+        ".field{display:flex;flex-direction:column;gap:5px;min-width:230px}" +
+        "label{font-size:12px;font-weight:bold;color:#475569}" +
+        "select,input{height:34px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:4px;padding:6px;background:#fff}" +
+        "button{height:34px;padding:0 14px;border:0;border-radius:4px;background:#0a6ed1;color:#fff;font-weight:bold;cursor:pointer}" +
+        "button.alt{background:#64748b}" +
+        ".info{padding:10px;margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;font-size:12px}" +
+        ".message{margin-bottom:12px;min-height:18px;font-size:13px;font-weight:bold}" +
         ".message.success{color:#15803d}.message.error{color:#dc2626}.message.info{color:#0369a1}" +
-        ".table-wrap{overflow:auto;border:1px solid #e2e8f0;border-radius:4px;max-height:420px}" +
-        "table{width:100%;border-collapse:collapse;min-width:700px;font-size:12px}" +
-        "th{position:sticky;top:0;background:#f1f5f9;color:#334155;text-align:left;font-weight:700}" +
-        "th,td{padding:8px;border-bottom:1px solid #e2e8f0;white-space:nowrap}" +
-        "tr:last-child td{border-bottom:0}" +
-        ".status{font-weight:700;text-transform:capitalize}" +
-        ".status.pending{color:#a16207}.status.success{color:#15803d}.status.error{color:#dc2626}" +
-        ".empty{padding:30px;text-align:center;color:#64748b;border:1px dashed #cbd5e1;border-radius:4px}" +
+        ".grid{overflow:auto;max-height:400px;border:1px solid #e2e8f0;border-radius:4px}" +
+        "table{border-collapse:collapse;width:100%;min-width:700px;font-size:12px}" +
+        "th,td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:left;white-space:nowrap}" +
+        "th{background:#f1f5f9}" +
+        ".status{font-weight:bold;text-transform:capitalize}" +
+        ".pending{color:#a16207}.success{color:#15803d}.error{color:#dc2626}" +
+        ".empty{padding:28px;text-align:center;color:#64748b;border:1px dashed #cbd5e1;border-radius:4px}" +
         "</style>" +
-        '<div class="container">' +
-        '<div class="title">Master Data Uploader</div>' +
-        '<div class="toolbar">' +
+        '<div class="box">' +
+        "<h3>Master Data Uploader</h3>" +
+        '<div class="tools">' +
         '<div class="field"><label>Dimension</label><select id="dimension">' +
-        optionHtml +
+        options +
         "</select></div>" +
         '<div class="field"><label>CSV File</label><input id="file" type="file" accept=".csv"></div>' +
-        '<button id="start" class="secondary">Start Import</button>' +
+        '<button id="start" class="alt">Start Import</button>' +
         '<button id="save">Save to Model</button>' +
-        '<button id="reset" class="secondary">Reset</button>' +
+        '<button id="reset" class="alt">Reset</button>' +
         "</div>" +
-        '<div class="info">' +
-        "<span><strong>Model:</strong> " + escapeHtml(this._props.modelId || "Not configured") + "</span>" +
-        "<span><strong>Dimension:</strong> " + escapeHtml(currentDimension ? currentDimension.label : "Not configured") + "</span>" +
-        "<span><strong>Rows:</strong> " + this._rows.length + "</span>" +
+        '<div class="info"><b>Model:</b> ' +
+        escapeHtml(this._props.modelId || "Not configured") +
+        " &nbsp; | &nbsp; <b>Dimension:</b> " +
+        escapeHtml(selectedDimension ? selectedDimension.label : "Not configured") +
+        " &nbsp; | &nbsp; <b>Rows:</b> " +
+        this._rows.length +
         "</div>" +
         '<div class="message ' + escapeHtml(this._messageType) + '">' +
         escapeHtml(this._message) +
         "</div>" +
         (this._headers.length > 0
-          ? '<div class="table-wrap"><table><thead><tr><th>#</th>' +
+          ? '<div class="grid"><table><thead><tr><th>#</th>' +
             headerHtml +
             "<th>Status</th><th>Message</th></tr></thead><tbody>" +
-            bodyHtml +
+            rowsHtml +
             "</tbody></table></div>"
-          : '<div class="empty">Select a configured dimension and upload a CSV file.</div>') +
+          : '<div class="empty">Select a dimension and upload a CSV file.</div>') +
         "</div>";
 
-      this._shadowRoot.querySelector("#dimension").addEventListener("change", function (event) {
+      this._root.querySelector("#dimension").addEventListener("change", function (event) {
         self._selectedDimension = event.target.value;
-        self._rows = [];
         self._headers = [];
-        self._setMessage("Dimension changed. Upload a CSV file for this dimension.", "info");
+        self._rows = [];
+        self._setMessage("Dimension changed. Upload a CSV file.", "info");
       });
 
-      this._shadowRoot.querySelector("#file").addEventListener("change", function (event) {
+      this._root.querySelector("#file").addEventListener("change", function (event) {
         self._readFile(event.target.files[0]);
       });
 
-      this._shadowRoot.querySelector("#start").addEventListener("click", function () {
+      this._root.querySelector("#start").addEventListener("click", function () {
         self.startImport();
       });
 
-      this._shadowRoot.querySelector("#save").addEventListener("click", function () {
-        self._validateAndSubmit();
+      this._root.querySelector("#save").addEventListener("click", function () {
+        self._submit();
       });
 
-      this._shadowRoot.querySelector("#reset").addEventListener("click", function () {
+      this._root.querySelector("#reset").addEventListener("click", function () {
         self.resetWidget();
       });
     }
@@ -526,7 +513,7 @@
       super();
 
       this._props = {};
-      this._shadowRoot = this.attachShadow({ mode: "open" });
+      this._root = this.attachShadow({ mode: "open" });
       this._render();
     }
 
@@ -543,7 +530,6 @@
     _setProperty(name, value) {
       var properties = {};
 
-      this._props[name] = value;
       properties[name] = value;
 
       this.dispatchEvent(new CustomEvent("propertiesChanged", {
@@ -555,49 +541,44 @@
 
     _render() {
       var self = this;
-      var dimensionFields = "";
+      var configFields = "";
       var index;
 
       for (index = 1; index <= 20; index++) {
-        var propertyName = "dim" + index + "Config";
-
-        dimensionFields +=
+        configFields +=
           '<div class="field">' +
-          "<label>Dimension " + index + " configuration</label>" +
-          '<textarea data-property="' + propertyName + '" placeholder=\'{"id":"COSTCENTER","label":"Cost Center","fields":[{"key":"ID","label":"ID","required":true},{"key":"DESCRIPTION","label":"Description","required":true},{"key":"SOURCE","label":"Source"}]}\'>' +
-          escapeHtml(this._props[propertyName] || "") +
-          "</textarea></div>";
+          "<label>Dimension " + index + " Configuration</label>" +
+          '<textarea data-key="dim' + index + 'Config"></textarea>' +
+          "</div>";
       }
 
-      this._shadowRoot.innerHTML =
+      this._root.innerHTML =
         "<style>" +
-        ":host{display:block;font-family:Arial,sans-serif;color:#1f2937}" +
+        ":host{display:block;font-family:Arial,sans-serif}" +
         ".panel{padding:12px}" +
-        "h3{margin:0 0 12px;font-size:16px}" +
-        ".hint{font-size:12px;line-height:1.5;color:#64748b;margin-bottom:16px}" +
         ".field{margin-bottom:14px}" +
-        "label{display:block;margin-bottom:5px;font-size:12px;font-weight:700;color:#334155}" +
-        "input,textarea{box-sizing:border-box;width:100%;padding:7px;border:1px solid #cbd5e1;border-radius:4px;font:12px Arial,sans-serif}" +
-        "textarea{height:104px;resize:vertical}" +
+        "label{display:block;margin-bottom:5px;font-size:12px;font-weight:bold}" +
+        "input,textarea{box-sizing:border-box;width:100%;border:1px solid #cbd5e1;border-radius:4px;padding:7px;font:12px Arial,sans-serif}" +
+        "textarea{height:105px;resize:vertical}" +
+        ".hint{font-size:12px;color:#64748b;line-height:1.45}" +
         "</style>" +
         '<div class="panel">' +
         "<h3>Master Data Uploader Settings</h3>" +
-        '<p class="hint">The CSV header names must match the configured field keys. Required fields must exist in the CSV and contain values.</p>' +
-        '<div class="field"><label>SAC Tenant URL</label>' +
-        '<input data-property="tenantUrl" value="' + escapeHtml(this._props.tenantUrl || "") + '"></div>' +
-        '<div class="field"><label>Planning Model ID</label>' +
-        '<input data-property="modelId" value="' + escapeHtml(this._props.modelId || "") + '"></div>' +
-        dimensionFields +
+        '<p class="hint">CSV headers must match the field keys configured for the selected dimension.</p>' +
+        '<div class="field"><label>SAC Tenant URL</label><input data-key="tenantUrl"></div>' +
+        '<div class="field"><label>Planning Model ID</label><input data-key="modelId"></div>' +
+        configFields +
         "</div>";
 
       Array.prototype.forEach.call(
-        this._shadowRoot.querySelectorAll("[data-property]"),
+        this._root.querySelectorAll("[data-key]"),
         function (element) {
+          var key = element.getAttribute("data-key");
+
+          element.value = self._props[key] || "";
+
           element.addEventListener("change", function (event) {
-            self._setProperty(
-              event.target.getAttribute("data-property"),
-              event.target.value
-            );
+            self._setProperty(key, event.target.value);
           });
         }
       );
