@@ -10,14 +10,14 @@
     {
       "kind": "main",
       "tag": "com-sac-masterdatauploader",
-      "url": "/master-data-uploader.js",
+      "url": "/Upload.js",
       "integrity": "",
       "ignoreIntegrity": true
     },
     {
       "kind": "styling",
       "tag": "com-sac-masterdatauploader-styling",
-      "url": "/master-data-uploader.js",
+      "url": "/Upload.js",
       "integrity": "",
       "ignoreIntegrity": true
     }
