@@ -1,598 +1,530 @@
 (function () {
   "use strict";
 
-  var CONFIG_KEYS = [];
-  var i;
-
-  for (i = 1; i <= 20; i++) {
-    CONFIG_KEYS.push("dim" + i + "Config");
-  }
-
-  function escapeHtml(value) {
-    return String(value === undefined || value === null ? "" : value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
-  }
-
-  function parseDimensionConfig(value) {
-    var config;
-
-    try {
-      config = JSON.parse(value || "");
-    } catch (error) {
-      return null;
-    }
-
-    if (!config || !config.id) {
-      return null;
-    }
-
-    config.fields = Array.isArray(config.fields) ? config.fields : [];
-
-    config.fields = config.fields.map(function (field) {
-      if (typeof field === "string") {
-        return {
-          key: field,
-          label: field,
-          required: false
-        };
-      }
-
-      return {
-        key: field.key || field.id || "",
-        label: field.label || field.key || field.id || "",
-        required: field.required === true
-      };
-    }).filter(function (field) {
-      return field.key !== "";
-    });
-
-    return config;
-  }
-
-  function parseCSV(text) {
-    var rows = [];
-    var row = [];
-    var value = "";
-    var quoted = false;
-    var character;
-    var index;
-
-    for (index = 0; index < text.length; index++) {
-      character = text[index];
-
-      if (character === '"') {
-        if (quoted && text[index + 1] === '"') {
-          value += '"';
-          index++;
-        } else {
-          quoted = !quoted;
-        }
-      } else if (character === "," && !quoted) {
-        row.push(value.trim());
-        value = "";
-      } else if ((character === "\n" || character === "\r") && !quoted) {
-        if (character === "\r" && text[index + 1] === "\n") {
-          index++;
-        }
-
-        row.push(value.trim());
-
-        if (row.some(function (cell) {
-          return cell !== "";
-        })) {
-          rows.push(row);
-        }
-
-        row = [];
-        value = "";
-      } else {
-        value += character;
-      }
-    }
-
-    if (value !== "" || row.length > 0) {
-      row.push(value.trim());
-      rows.push(row);
-    }
-
-    return rows;
-  }
+  const TAG = "com-example-master-data-uploader";
 
   class MasterDataUploader extends HTMLElement {
     constructor() {
       super();
-
-      this._props = {};
-      this._rows = [];
-      this._headers = [];
-      this._selectedDimension = "";
-      this._message = "";
-      this._messageType = "info";
-      this._started = false;
-
-      this._root = this.attachShadow({ mode: "open" });
-      this._render();
+      this.attachShadow({ mode: "open" });
+      this.records = [];
+      this.columns = [];
+      this.validation = { errors: [], warnings: [] };
+      this._initialized = false;
     }
 
-    onCustomWidgetAfterUpdate(changedProperties) {
-      var self = this;
-
-      Object.keys(changedProperties || {}).forEach(function (key) {
-        self._props[key] = changedProperties[key];
-      });
-
-      this._render();
+    static get observedAttributes() {
+      return ["targetdimension", "existingids"];
     }
 
-    startImport() {
-      this._started = true;
-      this._message = "Import started. Select a dimension and upload a CSV file.";
-      this._messageType = "info";
-
-      this.dispatchEvent(new CustomEvent("onStart", {
-        detail: {
-          modelId: this._props.modelId || ""
-        }
-      }));
-
-      this._render();
+    connectedCallback() {
+      // Widget initialization / on-start lifecycle.
+      if (!this._initialized) {
+        this._initialized = true;
+        this.render();
+      }
     }
 
-    getSelectedDimension() {
-      return this._selectedDimension || "";
+    attributeChangedCallback() {
+      if (this._initialized) {
+        this.validateAndRender();
+      }
     }
 
-    getRowCount() {
-      return this._rows.length;
+    get targetDimension() {
+      return this.getAttribute("targetdimension") || "";
     }
 
-    getRowFieldValue(index, fieldKey) {
-      var row = this._rows[Number(index)];
+    get existingIds() {
+      const raw = this.getAttribute("existingids") || "";
+      if (!raw.trim()) return [];
 
-      if (!row || !fieldKey) {
-        return "";
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.map(String);
+      } catch (_) {
+        // Fall back to comma-separated IDs.
       }
 
-      return String(row.values[fieldKey] || "");
+      return raw.split(",").map((id) => id.trim()).filter(Boolean);
     }
 
-    getImportPayload() {
-      return JSON.stringify({
-        tenantUrl: this._props.tenantUrl || "",
-        modelId: this._props.modelId || "",
-        dimensionId: this._selectedDimension || "",
-        headers: this._headers,
-        rows: this._rows
-      });
-    }
-
-    setRowStatus(index, status, message) {
-      var row = this._rows[Number(index)];
-
-      if (!row) {
-        return;
-      }
-
-      row.status = String(status || "pending").toLowerCase();
-      row.message = String(message || "");
-      this._render();
-    }
-
-    setSaveResult(status, message) {
-      var result = String(status || "error").toLowerCase();
-
-      this._message = message || (
-        result === "success"
-          ? "Master data saved successfully."
-          : "Master data save failed."
-      );
-
-      this._messageType = result;
-      this._render();
-
-      this.dispatchEvent(new CustomEvent(
-        result === "success" ? "onSave" : "onError",
-        {
-          detail: {
-            modelId: this._props.modelId || "",
-            dimensionId: this._selectedDimension || "",
-            message: this._message
+    render() {
+      this.shadowRoot.innerHTML = `
+        <style>
+          :host {
+            display: block;
+            font-family: Arial, sans-serif;
+            color: #202124;
+            font-size: 14px;
           }
-        }
-      ));
-    }
-
-    resetWidget() {
-      this._rows = [];
-      this._headers = [];
-      this._selectedDimension = "";
-      this._message = "";
-      this._messageType = "info";
-      this._started = false;
-      this._render();
-    }
-
-    _getDimensions() {
-      var self = this;
-      var dimensions = [];
-
-      CONFIG_KEYS.forEach(function (key) {
-        var config = parseDimensionConfig(self._props[key]);
-
-        if (config) {
-          dimensions.push(config);
-        }
-      });
-
-      return dimensions;
-    }
-
-    _getSelectedDimensionConfig() {
-      var dimensions = this._getDimensions();
-      var index;
-
-      for (index = 0; index < dimensions.length; index++) {
-        if (dimensions[index].id === this._selectedDimension) {
-          return dimensions[index];
-        }
-      }
-
-      return null;
-    }
-
-    _setMessage(message, type) {
-      this._message = message;
-      this._messageType = type || "info";
-      this._render();
-    }
-
-    _readFile(file) {
-      var self = this;
-      var reader = new FileReader();
-
-      if (!file) {
-        return;
-      }
-
-      if (!/\.csv$/i.test(file.name)) {
-        this._setMessage("Only CSV files are supported.", "error");
-        return;
-      }
-
-      reader.onload = function (event) {
-        self._loadCSV(String(event.target.result || ""));
-      };
-
-      reader.onerror = function () {
-        self._setMessage("Unable to read the CSV file.", "error");
-      };
-
-      reader.readAsText(file);
-    }
-
-    _loadCSV(text) {
-      var csvRows = parseCSV(text);
-      var headers;
-      var rows;
-
-      if (csvRows.length < 2) {
-        this._setMessage(
-          "CSV must contain headers and at least one data row.",
-          "error"
-        );
-        return;
-      }
-
-      headers = csvRows[0].map(function (header) {
-        return String(header || "").trim();
-      });
-
-      if (headers.some(function (header) {
-        return header === "";
-      })) {
-        this._setMessage("CSV headers cannot be empty.", "error");
-        return;
-      }
-
-      rows = csvRows.slice(1);
-      this._headers = headers;
-
-      this._rows = rows.map(function (cells) {
-        var values = {};
-
-        headers.forEach(function (header, index) {
-          values[header] = cells[index] === undefined ? "" : cells[index];
-        });
-
-        return {
-          values: values,
-          status: "pending",
-          message: ""
-        };
-      });
-
-      this._setMessage(this._rows.length + " row(s) loaded successfully.", "success");
-    }
-
-    _submit() {
-      var dimension = this._getSelectedDimensionConfig();
-      var missingColumns = [];
-      var invalidRows = [];
-      var self = this;
-
-      if (!this._started) {
-        this.startImport();
-      }
-
-      if (!this._props.modelId) {
-        this._setMessage("Planning Model ID is required.", "error");
-        return;
-      }
-
-      if (!dimension) {
-        this._setMessage("Select a configured dimension.", "error");
-        return;
-      }
-
-      if (this._rows.length === 0) {
-        this._setMessage("Upload a CSV file before saving.", "error");
-        return;
-      }
-
-      dimension.fields.forEach(function (field) {
-        if (field.required && self._headers.indexOf(field.key) === -1) {
-          missingColumns.push(field.key);
-        }
-      });
-
-      if (missingColumns.length > 0) {
-        this._setMessage(
-          "Missing required CSV columns: " + missingColumns.join(", "),
-          "error"
-        );
-        return;
-      }
-
-      this._rows.forEach(function (row, rowIndex) {
-        dimension.fields.forEach(function (field) {
-          if (field.required && !String(row.values[field.key] || "").trim()) {
-            row.status = "error";
-            row.message = "Missing required value: " + field.key;
-            invalidRows.push(rowIndex + 1);
+          .box {
+            border: 1px solid #c9cdd2;
+            border-radius: 8px;
+            padding: 16px;
+            background: #fff;
           }
-        });
+          h3 { margin: 0 0 12px; font-size: 18px; }
+          .row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+          label { display: block; margin: 6px 0; }
+          input, select, button {
+            font: inherit;
+            padding: 7px 9px;
+            border: 1px solid #aeb4bb;
+            border-radius: 4px;
+          }
+          input[type="file"] { max-width: 100%; }
+          button { cursor: pointer; background: #f5f7f9; }
+          button.primary { background: #0070f2; color: #fff; border-color: #0070f2; }
+          button:disabled { opacity: .5; cursor: not-allowed; }
+          .columns { display: flex; gap: 16px; flex-wrap: wrap; }
+          .status { margin-top: 12px; padding: 10px; border-radius: 4px; }
+          .ok { background: #e8f5e9; }
+          .bad { background: #ffebee; }
+          .muted { color: #60666d; font-size: 12px; }
+          .member-form { border-top: 1px solid #ddd; margin-top: 16px; padding-top: 12px; }
+          .member-form input { min-width: 140px; }
+          ul { margin: 6px 0; padding-left: 20px; }
+          .preview { overflow: auto; max-height: 220px; margin-top: 12px; }
+          table { border-collapse: collapse; width: 100%; font-size: 12px; }
+          th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+          th { background: #f3f5f7; }
+        </style>
+
+        <div class="box">
+          <h3>Master data uploader</h3>
+          <div class="muted">
+            Target dimension: <strong id="dimension"></strong>
+          </div>
+
+          <div class="row">
+            <input id="file" type="file" accept=".csv,.json,application/json,text/csv">
+            <button id="clear" type="button">Clear data</button>
+          </div>
+
+          <div id="mapping"></div>
+
+          <div class="member-form">
+            <strong>Add a member manually</strong>
+            <div id="manual-fields" class="row"></div>
+            <button id="add-member" type="button">Add member</button>
+          </div>
+
+          <div id="status" class="status" hidden></div>
+          <div id="preview" class="preview"></div>
+
+          <div class="row">
+            <button id="upload" class="primary" type="button" disabled>
+              Validate and send to SAC
+            </button>
+          </div>
+          <div class="muted">
+            Sending data raises the onUploadRequested event. A SAC script must handle
+            that event and create the members in the model.
+          </div>
+        </div>
+      `;
+
+      this.shadowRoot.getElementById("dimension").textContent =
+        this.targetDimension || "(not configured)";
+
+      this.shadowRoot.getElementById("file").addEventListener("change", (event) => {
+        this.loadFile(event.target.files && event.target.files[0]);
       });
 
-      if (invalidRows.length > 0) {
-        this._setMessage(
-          "Required values missing in row(s): " + invalidRows.join(", "),
-          "error"
-        );
-        return;
-      }
+      this.shadowRoot.getElementById("clear").addEventListener("click", () => {
+        this.records = [];
+        this.columns = [];
+        this.renderMapping();
+        this.validateAndRender();
+      });
 
-      this._setMessage(
-        "Saving " + this._rows.length + " member(s) to the SAC model.",
-        "info"
-      );
+      this.shadowRoot.getElementById("add-member").addEventListener("click", () => {
+        this.addManualMember();
+      });
 
-      this.dispatchEvent(new CustomEvent("onSubmit", {
-        detail: {
-          modelId: this._props.modelId,
-          dimensionId: this._selectedDimension,
-          rowCount: this._rows.length
+      this.shadowRoot.getElementById("upload").addEventListener("click", () => {
+        this.submit();
+      });
+
+      this.renderMapping();
+      this.renderManualFields();
+      this.validateAndRender();
+    }
+
+    async loadFile(file) {
+      if (!file) return;
+
+      try {
+        const text = await file.text();
+        const lowerName = file.name.toLowerCase();
+
+        if (lowerName.endsWith(".json")) {
+          this.loadJson(text);
+        } else {
+          this.loadCsv(text);
         }
-      }));
+
+        this.renderMapping();
+        this.renderManualFields();
+        this.validateAndRender();
+      } catch (error) {
+        this.records = [];
+        this.columns = [];
+        this.setStatus(`Could not read file: ${error.message}`, true);
+      }
     }
 
-    _render() {
-      var self = this;
-      var dimensions = this._getDimensions();
-      var selectedDimension = this._getSelectedDimensionConfig();
-      var options = '<option value="">Select dimension</option>';
-      var headerHtml = "";
-      var rowsHtml = "";
+    loadJson(text) {
+      const parsed = JSON.parse(text);
+      const rows = Array.isArray(parsed) ? parsed : parsed.members;
 
-      if (!this._selectedDimension && dimensions.length > 0) {
-        this._selectedDimension = dimensions[0].id;
-        selectedDimension = dimensions[0];
+      if (!Array.isArray(rows)) {
+        throw new Error('JSON must be an array or an object containing a "members" array.');
       }
 
-      dimensions.forEach(function (dimension) {
-        options +=
-          '<option value="' + escapeHtml(dimension.id) + '"' +
-          (dimension.id === self._selectedDimension ? " selected" : "") +
-          ">" + escapeHtml(dimension.label || dimension.id) + "</option>";
-      });
-
-      if (this._headers.length > 0) {
-        headerHtml = this._headers.map(function (header) {
-          return "<th>" + escapeHtml(header) + "</th>";
-        }).join("");
-
-        this._rows.forEach(function (row, rowIndex) {
-          var cells = self._headers.map(function (header) {
-            return "<td>" + escapeHtml(row.values[header]) + "</td>";
-          }).join("");
-
-          rowsHtml +=
-            "<tr>" +
-            "<td>" + (rowIndex + 1) + "</td>" +
-            cells +
-            '<td class="status ' + escapeHtml(row.status) + '">' +
-            escapeHtml(row.status) +
-            "</td>" +
-            "<td>" + escapeHtml(row.message) + "</td>" +
-            "</tr>";
-        });
-      }
-
-      this._root.innerHTML =
-        "<style>" +
-        ":host{display:block;font-family:Arial,sans-serif;color:#1f2937}" +
-        ".box{padding:16px;border:1px solid #d1d5db;border-radius:8px;background:#fff;box-sizing:border-box}" +
-        "h3{margin:0 0 16px;font-size:18px}" +
-        ".tools{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}" +
-        ".field{display:flex;flex-direction:column;gap:5px;min-width:230px}" +
-        "label{font-size:12px;font-weight:bold;color:#475569}" +
-        "select,input{height:34px;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:4px;padding:6px;background:#fff}" +
-        "button{height:34px;padding:0 14px;border:0;border-radius:4px;background:#0a6ed1;color:#fff;font-weight:bold;cursor:pointer}" +
-        "button.alt{background:#64748b}" +
-        ".info{padding:10px;margin-bottom:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;font-size:12px}" +
-        ".message{margin-bottom:12px;min-height:18px;font-size:13px;font-weight:bold}" +
-        ".message.success{color:#15803d}.message.error{color:#dc2626}.message.info{color:#0369a1}" +
-        ".grid{overflow:auto;max-height:400px;border:1px solid #e2e8f0;border-radius:4px}" +
-        "table{border-collapse:collapse;width:100%;min-width:700px;font-size:12px}" +
-        "th,td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:left;white-space:nowrap}" +
-        "th{background:#f1f5f9}" +
-        ".status{font-weight:bold;text-transform:capitalize}" +
-        ".pending{color:#a16207}.success{color:#15803d}.error{color:#dc2626}" +
-        ".empty{padding:28px;text-align:center;color:#64748b;border:1px dashed #cbd5e1;border-radius:4px}" +
-        "</style>" +
-        '<div class="box">' +
-        "<h3>Master Data Uploader</h3>" +
-        '<div class="tools">' +
-        '<div class="field"><label>Dimension</label><select id="dimension">' +
-        options +
-        "</select></div>" +
-        '<div class="field"><label>CSV File</label><input id="file" type="file" accept=".csv"></div>' +
-        '<button id="start" class="alt">Start Import</button>' +
-        '<button id="save">Save to Model</button>' +
-        '<button id="reset" class="alt">Reset</button>' +
-        "</div>" +
-        '<div class="info"><b>Model:</b> ' +
-        escapeHtml(this._props.modelId || "Not configured") +
-        " &nbsp; | &nbsp; <b>Dimension:</b> " +
-        escapeHtml(selectedDimension ? selectedDimension.label : "Not configured") +
-        " &nbsp; | &nbsp; <b>Rows:</b> " +
-        this._rows.length +
-        "</div>" +
-        '<div class="message ' + escapeHtml(this._messageType) + '">' +
-        escapeHtml(this._message) +
-        "</div>" +
-        (this._headers.length > 0
-          ? '<div class="grid"><table><thead><tr><th>#</th>' +
-            headerHtml +
-            "<th>Status</th><th>Message</th></tr></thead><tbody>" +
-            rowsHtml +
-            "</tbody></table></div>"
-          : '<div class="empty">Select a dimension and upload a CSV file.</div>') +
-        "</div>";
-
-      this._root.querySelector("#dimension").addEventListener("change", function (event) {
-        self._selectedDimension = event.target.value;
-        self._headers = [];
-        self._rows = [];
-        self._setMessage("Dimension changed. Upload a CSV file.", "info");
-      });
-
-      this._root.querySelector("#file").addEventListener("change", function (event) {
-        self._readFile(event.target.files[0]);
-      });
-
-      this._root.querySelector("#start").addEventListener("click", function () {
-        self.startImport();
-      });
-
-      this._root.querySelector("#save").addEventListener("click", function () {
-        self._submit();
-      });
-
-      this._root.querySelector("#reset").addEventListener("click", function () {
-        self.resetWidget();
-      });
-    }
-  }
-
-  class MasterDataUploaderStyling extends HTMLElement {
-    constructor() {
-      super();
-
-      this._props = {};
-      this._root = this.attachShadow({ mode: "open" });
-      this._render();
-    }
-
-    set changedProperties(properties) {
-      var self = this;
-
-      Object.keys(properties || {}).forEach(function (key) {
-        self._props[key] = properties[key];
-      });
-
-      this._render();
-    }
-
-    _setProperty(name, value) {
-      var properties = {};
-
-      properties[name] = value;
-
-      this.dispatchEvent(new CustomEvent("propertiesChanged", {
-        detail: {
-          properties: properties
+      this.records = rows.map((row) => {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+          throw new Error("Each JSON member must be an object.");
         }
-      }));
+
+        const properties =
+          row.properties && typeof row.properties === "object"
+            ? row.properties
+            : {};
+
+        return { ...row, ...properties };
+      });
+
+      this.columns = [...new Set(this.records.flatMap((row) => Object.keys(row)))];
     }
 
-    _render() {
-      var self = this;
-      var configFields = "";
-      var index;
-
-      for (index = 1; index <= 20; index++) {
-        configFields +=
-          '<div class="field">' +
-          "<label>Dimension " + index + " Configuration</label>" +
-          '<textarea data-key="dim' + index + 'Config"></textarea>' +
-          "</div>";
+    loadCsv(text) {
+      const rows = this.parseCsv(text);
+      if (rows.length < 2) {
+        throw new Error("CSV must contain a header row and at least one data row.");
       }
 
-      this._root.innerHTML =
-        "<style>" +
-        ":host{display:block;font-family:Arial,sans-serif}" +
-        ".panel{padding:12px}" +
-        ".field{margin-bottom:14px}" +
-        "label{display:block;margin-bottom:5px;font-size:12px;font-weight:bold}" +
-        "input,textarea{box-sizing:border-box;width:100%;border:1px solid #cbd5e1;border-radius:4px;padding:7px;font:12px Arial,sans-serif}" +
-        "textarea{height:105px;resize:vertical}" +
-        ".hint{font-size:12px;color:#64748b;line-height:1.45}" +
-        "</style>" +
-        '<div class="panel">' +
-        "<h3>Master Data Uploader Settings</h3>" +
-        '<p class="hint">CSV headers must match the field keys configured for the selected dimension.</p>' +
-        '<div class="field"><label>SAC Tenant URL</label><input data-key="tenantUrl"></div>' +
-        '<div class="field"><label>Planning Model ID</label><input data-key="modelId"></div>' +
-        configFields +
-        "</div>";
+      this.columns = rows[0].map((value) => value.trim());
+      if (this.columns.some((column) => !column)) {
+        throw new Error("CSV contains an empty column name.");
+      }
 
-      Array.prototype.forEach.call(
-        this._root.querySelectorAll("[data-key]"),
-        function (element) {
-          var key = element.getAttribute("data-key");
-
-          element.value = self._props[key] || "";
-
-          element.addEventListener("change", function (event) {
-            self._setProperty(key, event.target.value);
+      this.records = rows.slice(1)
+        .filter((row) => row.some((value) => String(value || "").trim()))
+        .map((row) => {
+          const record = {};
+          this.columns.forEach((column, index) => {
+            record[column] = row[index] === undefined ? "" : row[index];
           });
+          return record;
+        });
+    }
+
+    parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let cell = "";
+      let quoted = false;
+
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        const next = text[i + 1];
+
+        if (char === '"' && quoted && next === '"') {
+          cell += '"';
+          i++;
+        } else if (char === '"') {
+          quoted = !quoted;
+        } else if (char === "," && !quoted) {
+          row.push(cell);
+          cell = "";
+        } else if ((char === "\n" || char === "\r") && !quoted) {
+          if (char === "\r" && next === "\n") i++;
+          row.push(cell);
+          rows.push(row);
+          row = [];
+          cell = "";
+        } else {
+          cell += char;
         }
+      }
+
+      if (quoted) throw new Error("CSV contains an unclosed quoted value.");
+
+      if (cell.length || row.length) {
+        row.push(cell);
+        rows.push(row);
+      }
+
+      return rows;
+    }
+
+    renderMapping() {
+      const container = this.shadowRoot.getElementById("mapping");
+
+      if (!this.columns.length) {
+        container.innerHTML = '<p class="muted">Upload a CSV or JSON file to select columns.</p>';
+        return;
+      }
+
+      const options = this.columns.map((column) =>
+        `<option value="${this.escapeHtml(column)}">${this.escapeHtml(column)}</option>`
+      ).join("");
+
+      container.innerHTML = `
+        <div class="row">
+          <label>ID column
+            <select id="id-column">${options}</select>
+          </label>
+          <label>Description column (optional)
+            <select id="description-column">
+              <option value="">(none)</option>${options}
+            </select>
+          </label>
+        </div>
+        <div><strong>Properties to include</strong></div>
+        <div id="property-list" class="columns"></div>
+      `;
+
+      const idSelect = this.shadowRoot.getElementById("id-column");
+      const descSelect = this.shadowRoot.getElementById("description-column");
+
+      const idCandidate = this.findColumn(["id", "memberid", "member_id", "code"]);
+      const descCandidate = this.findColumn(["description", "name", "text"]);
+      if (idCandidate) idSelect.value = idCandidate;
+      if (descCandidate) descSelect.value = descCandidate;
+
+      const propertyList = this.shadowRoot.getElementById("property-list");
+      this.columns.forEach((column) => {
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = column;
+        checkbox.checked = column !== idSelect.value && column !== descSelect.value;
+        checkbox.addEventListener("change", () => {
+          this.renderManualFields();
+          this.validateAndRender();
+        });
+        label.append(checkbox, document.createTextNode(` ${column}`));
+        propertyList.appendChild(label);
+      });
+
+      idSelect.addEventListener("change", () => {
+        this.updatePropertyDefaults();
+        this.renderManualFields();
+        this.validateAndRender();
+      });
+
+      descSelect.addEventListener("change", () => {
+        this.updatePropertyDefaults();
+        this.renderManualFields();
+        this.validateAndRender();
+      });
+    }
+
+    findColumn(candidates) {
+      return this.columns.find((column) =>
+        candidates.includes(column.toLowerCase().replace(/[\s-]/g, ""))
       );
+    }
+
+    updatePropertyDefaults() {
+      const id = this.shadowRoot.getElementById("id-column").value;
+      const desc = this.shadowRoot.getElementById("description-column").value;
+
+      this.shadowRoot.querySelectorAll("#property-list input[type=checkbox]").forEach((box) => {
+        if (box.value === id || box.value === desc) box.checked = false;
+      });
+    }
+
+    selectedProperties() {
+      return [...this.shadowRoot.querySelectorAll(
+        "#property-list input[type=checkbox]:checked"
+      )].map((box) => box.value);
+    }
+
+    renderManualFields() {
+      const container = this.shadowRoot.getElementById("manual-fields");
+      const properties = this.selectedProperties();
+
+      container.innerHTML = `
+        <input id="manual-id" placeholder="Member ID *">
+        <input id="manual-description" placeholder="Description">
+        ${properties.map((property, index) =>
+          `<input data-property="${this.escapeHtml(property)}"
+                  placeholder="${this.escapeHtml(property)}">`
+        ).join("")}
+      `;
+    }
+
+    addManualMember() {
+      const id = this.shadowRoot.getElementById("manual-id").value.trim();
+      const description =
+        this.shadowRoot.getElementById("manual-description").value.trim();
+      const record = { id, description };
+
+      this.shadowRoot.querySelectorAll("#manual-fields [data-property]").forEach((input) => {
+        record[input.dataset.property] = input.value.trim();
+      });
+
+      this.records.push(record);
+
+      this.columns = [...new Set([
+        ...this.columns,
+        "id",
+        "description",
+        ...this.selectedProperties()
+      ])];
+
+      this.renderMapping();
+      this.renderManualFields();
+      this.validateAndRender();
+    }
+
+    validate() {
+      const errors = [];
+      const warnings = [];
+      const idColumn =
+        this.shadowRoot.getElementById("id-column")?.value || "id";
+      const descColumn =
+        this.shadowRoot.getElementById("description-column")?.value || "";
+      const propertyColumns = this.selectedProperties();
+      const seen = new Set();
+      const existing = new Set(this.existingIds);
+
+      if (!this.targetDimension) {
+        errors.push("Configure the targetDimension widget property.");
+      }
+      if (!this.records.length) {
+        errors.push("No member records are loaded.");
+      }
+
+      const members = this.records.map((record, index) => {
+        const id = String(record[idColumn] ?? record.id ?? "").trim();
+        const description = String(
+          (descColumn && record[descColumn]) ?? record.description ?? ""
+        ).trim();
+
+        if (!id) errors.push(`Row ${index + 1}: member ID is blank.`);
+        if (id && seen.has(id)) errors.push(`Duplicate ID in upload: ${id}`);
+        if (id && existing.has(id)) errors.push(`Member already exists: ${id}`);
+        if (id) seen.add(id);
+
+        const properties = {};
+        propertyColumns.forEach((column) => {
+          const value = record[column];
+          if (value !== undefined && value !== null && String(value).trim() !== "") {
+            properties[column] = String(value).trim();
+          }
+        });
+
+        return { id, description, properties };
+      });
+
+      if (members.length && !errors.length) {
+        warnings.push(`${members.length} member(s) passed client-side validation.`);
+      }
+
+      return { errors, warnings, members };
+    }
+
+    validateAndRender() {
+      this.validation = this.validate();
+      const { errors, warnings } = this.validation;
+      const status = this.shadowRoot.getElementById("status");
+      const upload = this.shadowRoot.getElementById("upload");
+
+      status.hidden = false;
+      status.className = `status ${errors.length ? "bad" : "ok"}`;
+      status.innerHTML = errors.length
+        ? `<strong>Validation errors</strong><ul>${errors.map(
+            (error) => `<li>${this.escapeHtml(error)}</li>`
+          ).join("")}</ul>`
+        : `<strong>Ready</strong><div>${warnings.map(this.escapeHtml).join("<br>")}</div>`;
+
+      upload.disabled = errors.length > 0;
+
+      this.renderPreview();
+
+      this.dispatchEvent(new CustomEvent("onValidationChanged", {
+        detail: {
+          valid: errors.length === 0,
+          errors,
+          recordCount: this.records.length
+        },
+        bubbles: true,
+        composed: true
+      }));
+    }
+
+    renderPreview() {
+      const container = this.shadowRoot.getElementById("preview");
+      const members = this.validation.members || [];
+
+      if (!members.length) {
+        container.innerHTML = "";
+        return;
+      }
+
+      const headers = ["ID", "Description", ...this.selectedProperties()];
+      const visible = members.slice(0, 20);
+
+      container.innerHTML = `
+        <table>
+          <thead><tr>${headers.map((h) => `<th>${this.escapeHtml(h)}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${visible.map((member) => `
+              <tr>
+                <td>${this.escapeHtml(member.id)}</td>
+                <td>${this.escapeHtml(member.description)}</td>
+                ${this.selectedProperties().map((p) =>
+                  `<td>${this.escapeHtml(member.properties[p] || "")}</td>`
+                ).join("")}
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+        ${members.length > 20 ? `<p class="muted">Showing 20 of ${members.length} members.</p>` : ""}
+      `;
+    }
+
+    submit() {
+      this.validation = this.validate();
+      if (this.validation.errors.length) {
+        this.validateAndRender();
+        return;
+      }
+
+      this.dispatchEvent(new CustomEvent("onUploadRequested", {
+        detail: {
+          dimensionId: this.targetDimension,
+          members: this.validation.members
+        },
+        bubbles: true,
+        composed: true
+      }));
+    }
+
+    setStatus(message, isError) {
+      const status = this.shadowRoot.getElementById("status");
+      status.hidden = false;
+      status.className = `status ${isError ? "bad" : "ok"}`;
+      status.textContent = message;
+    }
+
+    escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      })[char]);
     }
   }
 
-  if (!customElements.get("com-sac-masterdatauploader")) {
-    customElements.define("com-sac-masterdatauploader", MasterDataUploader);
+  if (!customElements.get(TAG)) {
+    customElements.define(TAG, MasterDataUploader);
   }
-
-  if (!customElements.get("com-sac-masterdatauploader-styling")) {
-    customElements.define(
-      "com-sac-masterdatauploader-styling",
-      MasterDataUploaderStyling
-    );
-  }
-}());
+})();
