@@ -1,0 +1,536 @@
+{
+  "eula": "No part of this widget may be copied, reproduced, modified, reverse engineered, redistributed, or deployed to any other tenant or environment without prior written permission of the copyright holder. Contact: jorge.demiguelvijandi@bs.nttdata.com",
+  "vendor": "NTT DATA",
+  "license": "Proprietary - All rights reserved. Copyright (c) 2026 NTT DATA Business Solutions AG. This software is licensed, not sold, and is licensed for use solely within SAP Analytics Cloud tenants operated by or on behalf of the licensee named in the agreement under which it was supplied.",
+  "id": "com.nttdata.consolidationownership",
+  "version": "2.9.6",
+  "name": "Consolidation Ownership",
+  "newInstancePrefix": "Ownership",
+  "description": "Maintain consolidation method, consolidation % and ownership % per consolidation group and unit. NCI % is calculated for display only. All data crosses the script boundary as delimited text, so no JSON functions are needed in story scripting.",
+  "icon": "",
+  "webcomponents": [
+    {
+      "kind": "main",
+      "tag": "nttdata-consolidation-ownership",
+      "url": "/consolidation-ownership.js",
+      "integrity": "",
+      "ignoreIntegrity": true
+    },
+    {
+      "kind": "builder",
+      "tag": "nttdata-consolidation-ownership-builder",
+      "url": "/consolidation-ownership-builder.js",
+      "integrity": "",
+      "ignoreIntegrity": true
+    }
+  ],
+  "properties": {
+    "widgetTitle": {
+      "type": "string",
+      "description": "Title shown in the widget header",
+      "default": "Consolidation Ownership"
+    },
+    "scopeText": {
+      "type": "string",
+      "description": "Context line under the title, set from the story script",
+      "default": ""
+    },
+    "showNci": {
+      "type": "boolean",
+      "description": "Show the calculated NCI % column",
+      "default": true
+    },
+    "readOnly": {
+      "type": "boolean",
+      "description": "Disable all input controls",
+      "default": false
+    },
+    "grouped": {
+      "type": "boolean",
+      "description": "Group rows by consolidation group",
+      "default": true
+    },
+    "includeEmptyRows": {
+      "type": "boolean",
+      "description": "Show unbooked group/unit combinations as empty maintainable rows",
+      "default": false
+    },
+    "decimals": {
+      "type": "integer",
+      "description": "Decimal places for percentages",
+      "default": 2
+    },
+    "percentScale": {
+      "type": "integer",
+      "description": "Model scale for PCON/POWN. 100 = model stores 1 for 100% (fractions). 1 = model already stores 0-100.",
+      "default": 100
+    },
+    "defaultMethod": {
+      "type": "string",
+      "description": "Method id applied to newly added units",
+      "default": "100"
+    },
+    "methodList": {
+      "type": "string",
+      "description": "Consolidation methods as id~text~pgroup records, optionally followed by ~consolidation %~ownership % to FIX the method's percentages, and by two more to say what it EXPECTS (a warning, not a lock): 101~Holding~1~~~100 expects a consolidation % of 100. pgroup 0 marks a not-consolidated method: its percentages are locked to zero.",
+      "default": "101~Holding~1~~~100;;100~Full~1~~~100;;30~Equity~1;;86~Disposed in current year~1;;900~Not consolidated~0"
+    },
+    "fieldSeparator": {
+      "type": "string",
+      "description": "Separator between fields in the strings passed from the story script",
+      "default": "~"
+    },
+    "recordSeparator": {
+      "type": "string",
+      "description": "Separator between records in the strings passed from the story script",
+      "default": ";;"
+    },
+    "showPgroup": {
+      "type": "boolean",
+      "description": "Show the derived PGROUP column",
+      "default": false
+    },
+    "showSaveDialog": {
+      "type": "boolean",
+      "description": "Show the progress dialog for loading, refreshing and saving",
+      "default": true
+    },
+    "apiTenantUrl": {
+      "type": "string",
+      "description": "SAC tenant URL, no trailing slash. Leave empty to use the current origin.",
+      "default": ""
+    },
+    "apiModelId": {
+      "type": "string",
+      "description": "Model id for the master data API. Leave empty and call setModelId() from the story script, so the id is derived from the table's data source rather than typed.",
+      "default": ""
+    },
+    "autoLoadMasterData": {
+      "type": "boolean",
+      "description": "Load master data from the API when the widget initialises",
+      "default": true
+    },
+    "unitDimension": {
+      "type": "string",
+      "description": "Consolidation unit dimension id",
+      "default": "CL_V3_CONSUNIT"
+    },
+    "groupDimension": {
+      "type": "string",
+      "description": "Consolidation group dimension id",
+      "default": "CL_V3_CONSGROUP"
+    },
+    "memberIdColumn": {
+      "type": "string",
+      "description": "Master data column holding the member id",
+      "default": "ID"
+    },
+    "memberDescColumn": {
+      "type": "string",
+      "description": "Master data column holding the description",
+      "default": "Description"
+    },
+    "memberParentColumn": {
+      "type": "string",
+      "description": "Master data column holding the hierarchy parent",
+      "default": "H1_PARENTID"
+    },
+    "useHierarchy": {
+      "type": "boolean",
+      "description": "Read units from {dimension}MasterWithHierarchy so the parent column is available. Off uses the flat {dimension}Master.",
+      "default": true
+    },
+    "showFilterBar": {
+      "type": "boolean",
+      "description": "Show the version / period / group filter bar in the widget",
+      "default": true
+    },
+    "excludeUnits": {
+      "type": "string",
+      "description": "Consolidation unit ids to hide from the value help. Comma separated, trailing * is a prefix wildcard.",
+      "default": "#, SNONE"
+    },
+    "excludeGroups": {
+      "type": "string",
+      "description": "Consolidation group ids to hide. Comma separated, trailing * is a prefix wildcard.",
+      "default": "#, SNONE"
+    },
+    "periodIdPattern": {
+      "type": "string",
+      "description": "Regular expression a Date member id must match to appear in the period picker. Default keeps 6-digit base periods only. Empty shows every member.",
+      "default": "^\\d{6}$"
+    },
+    "checkLoadedScope": {
+      "type": "boolean",
+      "description": "Refuse ownership data whose version or period is not the one that was asked for. Switch off only if the tenant spells the ids of the result set in a form the comparison cannot read.",
+      "default": true
+    },
+    "diagnostics": {
+      "type": "boolean",
+      "description": "Print record detail in the browser console run log. Off in production: the detail contains ownership values.",
+      "default": false
+    }
+  },
+  "methods": {
+    "setUnits": {
+      "description": "Consolidation unit master data. One record per member: id~description~parentId",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Delimited member list"
+        }
+      ]
+    },
+    "setGroups": {
+      "description": "Consolidation group master data. One record per member: id~description",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Delimited member list"
+        }
+      ]
+    },
+    "setFactCells": {
+      "description": "Raw result set cells. One record per cell: group~unit~measureId~value. The widget pivots them into rows. Pass the version and period of the rows the table returned, or two empty strings when it returned none.",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Delimited cell list"
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "description": "Version id of the first result row, or an empty string"
+        },
+        {
+          "name": "period",
+          "type": "string",
+          "description": "Date id of the first result row, or an empty string"
+        }
+      ]
+    },
+    "clearData": {
+      "description": "Empties the table before a new load"
+    },
+    "hasChanges": {
+      "description": "True when there are unsaved edits or queued deletions",
+      "returnType": "boolean"
+    },
+    "getChangeCount": {
+      "description": "Number of records to write. Frozen from the moment Save is pressed until the save ends.",
+      "returnType": "integer"
+    },
+    "getChangeGroup": {
+      "description": "Consolidation group of change i",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getChangeUnit": {
+      "description": "Consolidation unit of change i",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getChangeMethod": {
+      "description": "Method id of change i, ready for setUserInput",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getChangePcon": {
+      "description": "Consolidation % of change i as text, ready for setUserInput",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getChangePown": {
+      "description": "Ownership % of change i as text, ready for setUserInput",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getChangePgroup": {
+      "description": "PGROUP of change i, derived from the method (1 = part of group, 0 = not consolidated)",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getDeleteCount": {
+      "description": "Number of entries queued for deletion",
+      "returnType": "integer"
+    },
+    "getDeleteGroup": {
+      "description": "Consolidation group of deletion i",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getDeleteUnit": {
+      "description": "Consolidation unit of deletion i",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getLastChangeGroup": {
+      "description": "Group of the last edited cell",
+      "returnType": "string"
+    },
+    "getLastChangeUnit": {
+      "description": "Unit of the last edited cell",
+      "returnType": "string"
+    },
+    "getLastChangeField": {
+      "description": "METHOD, PCON, POWN or NEW",
+      "returnType": "string"
+    },
+    "getLastChangeValue": {
+      "description": "New value of the last edited cell as text",
+      "returnType": "string"
+    },
+    "markSaved": {
+      "description": "Clears the dirty state after the story script has written to the model, and makes what was saved the state Revert returns to. The next load is compared with what was saved."
+    },
+    "beginSave": {
+      "description": "Open the save progress dialog",
+      "parameters": [
+        {
+          "name": "total",
+          "type": "integer",
+          "description": "Number of records that will be written"
+        }
+      ]
+    },
+    "saveStep": {
+      "description": "Announce a new phase in the save dialog",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Phase description"
+        }
+      ]
+    },
+    "saveDetail": {
+      "description": "Add one result line to the save log",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Line text"
+        },
+        {
+          "name": "ok",
+          "type": "boolean",
+          "description": "False marks the line as rejected"
+        }
+      ]
+    },
+    "endSave": {
+      "description": "Finish the save. A failure stays on screen until it is dismissed, with or without the progress dialog.",
+      "parameters": [
+        {
+          "name": "success",
+          "type": "boolean",
+          "description": "False if any value was rejected"
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "description": "Summary message"
+        }
+      ]
+    },
+    "setBusy": {
+      "description": "Show or hide the busy indicator",
+      "parameters": [
+        {
+          "name": "busy",
+          "type": "boolean",
+          "description": "Busy state"
+        }
+      ]
+    },
+    "showMessage": {
+      "description": "Show a message inside the widget. Kind error stays until dismissed; info and success fade.",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Message text"
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "description": "info, success or error"
+        }
+      ]
+    },
+    "loadMasterDataFromApi": {
+      "description": "Fetch consolidation unit and group master data from the SAC Data Export API, including the hierarchy parent"
+    },
+    "revertChanges": {
+      "description": "Discard all unsaved edits and deletions, restoring the last loaded state"
+    },
+    "setVersionOptions": {
+      "description": "Fill the version dropdown. Records id~description.",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Delimited option list"
+        }
+      ]
+    },
+    "setPeriodOptions": {
+      "description": "Fill the period dropdown. Records id~description.",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Delimited option list"
+        }
+      ]
+    },
+    "getFilterVersion": {
+      "description": "Currently selected version",
+      "returnType": "string"
+    },
+    "getFilterPeriod": {
+      "description": "Currently selected period",
+      "returnType": "string"
+    },
+    "getFilterGroupCount": {
+      "description": "Number of selected consolidation groups. Zero means all.",
+      "returnType": "integer"
+    },
+    "getFilterGroupAt": {
+      "description": "Selected consolidation group i",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "getFilterUnitCount": {
+      "description": "Number of selected consolidation units. Zero means all.",
+      "returnType": "integer"
+    },
+    "getFilterUnitAt": {
+      "description": "Selected consolidation unit i, as the qualified model key",
+      "returnType": "string",
+      "parameters": [
+        {
+          "name": "index",
+          "type": "integer",
+          "description": "Zero based index"
+        }
+      ]
+    },
+    "setModelId": {
+      "description": "The model id for the master data API, normally TBL.getDataSource().getInfo().modelId. Starts the master data load if it has not run.",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Model id, plain or in the t.N.id:id form"
+        }
+      ]
+    },
+    "applyFilterSelection": {
+      "description": "Call before setting the table filters from the filter bar: records the filter bar's selection as the scope that was asked for."
+    },
+    "getLoadedVersion": {
+      "description": "Version the rows on screen were read for. The only version a save may write to.",
+      "returnType": "string"
+    },
+    "getLoadedPeriod": {
+      "description": "Period the rows on screen were read for. The only period a save may write to.",
+      "returnType": "string"
+    },
+    "countConflicts": {
+      "description": "Pass the cells read again just before a save. Returns how many of the records about to be written no longer hold what was loaded.",
+      "returnType": "integer",
+      "parameters": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Delimited cell list, as for setFactCells"
+        }
+      ]
+    },
+    "getConflictText": {
+      "description": "The records countConflicts found, as text for a message",
+      "returnType": "string"
+    }
+  },
+  "events": {
+    "onOwnershipChanged": {
+      "description": "A method or percentage was edited. Use the getLastChange methods for details."
+    },
+    "onRowAdded": {
+      "description": "A consolidation unit was added from the hierarchy popup."
+    },
+    "onRowRemoved": {
+      "description": "One or more entries were queued for deletion."
+    },
+    "onSaveRequested": {
+      "description": "The user pressed Save. Loop over getChangeCount(), write to the model, then call markSaved()."
+    },
+    "onRefreshRequested": {
+      "description": "The user pressed Reload. Re-read the model and call setFactCells()."
+    },
+    "onMasterDataLoaded": {
+      "description": "Fired when master data has been loaded from the API"
+    },
+    "onFilterChanged": {
+      "description": "Apply was pressed in the filter bar. Set the table dimension filters and reload."
+    }
+  }
+}
